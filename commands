@@ -52,7 +52,8 @@ case "$1" in
     IMAGE=$(docker commit $ID)
     docker tag $IMAGE $DB_IMAGE
     # Launch container
-    ID=$(docker run -v $VOLUME -p 5432 -d $DB_IMAGE /usr/bin/start_pgsql.sh $DB_PASSWORD)
+    GATEWAY_IP=$(ip -f inet -o addr show docker0|cut -d\  -f 7 | cut -d/ -f 1)
+    ID=$(docker run -v $VOLUME -p $GATEWAY_IP::5432 -d $DB_IMAGE /usr/bin/start_pgsql.sh $DB_PASSWORD)
     sleep 4
     # Rename persistent volume
     if [[ ! -f "$DOKKU_ROOT/.postgresql/volume_$APP" ]]; then
@@ -64,8 +65,10 @@ case "$1" in
         echo $VOLUME_PATH > "$DOKKU_ROOT/.postgresql/volume_$APP"
     fi
     # Write port for further usage
-    PORT=$(docker port $ID 5432 | sed 's/0.0.0.0://')
+    PORT=$(docker port $ID 5432 | cut -d: -f2)
     echo $PORT > "$DOKKU_ROOT/.postgresql/port_$APP"
+    # Write host for later use
+    echo $GATEWAY_IP > "$DOKKU_ROOT/.postgresql/host_$APP"
     # Link to a potential existing app
     dokku postgresql:link $APP $APP
     echo
@@ -112,7 +115,7 @@ case "$1" in
         exit 1
     fi
     echo
-    echo "       Host: 172.17.42.1"
+    echo "       Host: $(cat "$DOKKU_ROOT/.postgresql/host_$APP")"
     echo "       Port: $(cat "$DOKKU_ROOT/.postgresql/port_$APP")"
     echo "       User: 'root'"
     echo "       Password: '$(cat "$DOKKU_ROOT/.postgresql/pwd_$APP")'"
@@ -134,8 +137,9 @@ case "$1" in
         fi
         DB_PASSWORD=$(cat "$DOKKU_ROOT/.postgresql/pwd_$APP")
         PORT=$(cat "$DOKKU_ROOT/.postgresql/port_$APP")
-        # Link database using dokku command
-        dokku config:set $APP "DATABASE_URL=postgres://root:$DB_PASSWORD@172.17.42.1:$PORT/db"
+        HOST=$(cat "$DOKKU_ROOT/.postgresql/host_$APP")
+# Link database using dokku command
+        dokku config:set $APP "DATABASE_URL=postgres://root:$DB_PASSWORD@$HOST:$PORT/db"
         echo
         echo "-----> $APP linked to $DB_IMAGE database"
     fi
